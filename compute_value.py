@@ -1,0 +1,236 @@
+import numpy
+import numpy as np
+import SimpleITK as sitk
+import torch.nn.functional as F
+import config
+import torch
+import os
+import csv
+from utils import common
+from medpy import metric
+
+def load_file_name_list(file_path):
+    file_name_list = []
+    with open(file_path, 'r') as file_to_read:
+        while True:
+            lines = file_to_read.readline().strip()  # 整行读取数据
+            if not lines:
+                break
+            file_name_list.append(lines.split())
+    return file_name_list
+def getdice(logits,targets):
+    inter = torch.sum(logits * targets)
+    union = torch.sum(logits) + torch.sum(targets)
+    dice = (2. * inter + 1e-8) / (union + 1e-8)
+    return dice
+def getasd(logits,targets):
+    asd = 0
+    for i in range(64):
+        if np.sum(logits[0][i].numpy())== 0 and np.sum(targets[0][i].numpy()) == 0:
+            asd_i = 0
+        if np.sum(logits[0][i].numpy()) == 0 or np.sum(targets[0][i].numpy()) == 0:
+            asd_i = 1
+        else:
+            asd_i = metric.asd(logits[0][i].numpy(),targets[0][i].numpy())
+        asd = asd + asd_i
+    asd = asd / 64
+    return asd
+def gethd(logits,targets):
+    hd = 0
+    for i in range(64):
+        if np.sum(logits[0][i].numpy())== 0 and np.sum(targets[0][i].numpy()) == 0:
+            hd_i = 0
+        if np.sum(logits[0][i].numpy()) == 0 or np.sum(targets[0][i].numpy()) == 0:
+            hd_i = 1
+        else:
+            hd_i = metric.hd95(logits[0][i].numpy(),targets[0][i].numpy())
+        hd = hd + hd_i
+    hd = hd / 64
+    return hd
+
+def get_hd(predLabel_array,labels,name,spacing):
+    # 计算dice
+    preorgan_fdata = predLabel_array[0].squeeze()
+    pretumor_fdata = predLabel_array[1].squeeze()
+    preorgan_fdata = torch.FloatTensor(preorgan_fdata.astype(float)).unsqueeze(0)
+    pretumor_fdata = torch.FloatTensor(pretumor_fdata.astype(float)).unsqueeze(0)
+    preorgan_labels = common.to_one_hot_3d(preorgan_fdata.long(), 4).numpy()
+    pretumor_labels = common.to_one_hot_3d(pretumor_fdata.long(), 2).numpy()
+    labelorgan_fdata = labels[0].squeeze()
+    labeltumor_fdata = labels[1].squeeze()
+    labelorgan_fdata = torch.FloatTensor(labelorgan_fdata.astype(float)).unsqueeze(0)
+    labeltumor_fdata = torch.FloatTensor(labeltumor_fdata.astype(float)).unsqueeze(0)
+    organ_label = common.to_one_hot_3d(labelorgan_fdata.long(), 4).numpy()
+    tumor_label = common.to_one_hot_3d(labeltumor_fdata.long(), 2).numpy()
+    temp_hd = [name]
+    hds = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for i in range(1, 4):
+        hd = gethd(torch.FloatTensor(organ_label[:, i, :, :, :]),
+                       torch.FloatTensor(preorgan_labels[:, i, :, :, :])) * spacing
+        hd = np.array(hd) * 3  #3是z轴spacing
+        temp_hd.append(hd)
+        hds[i] = hds[i] + hd
+    hd = gethd(torch.FloatTensor(tumor_label[:, 1, :, :, :]),
+                   torch.FloatTensor(pretumor_labels[:, 1, :, :, :])) * spacing
+    hd = np.array(hd) * 3
+    hds[4] = hds[4] + hd
+    temp_hd.append(hd*3)
+    # print(temp_hd)
+    return temp_hd
+
+
+def get_asd(predLabel_array,labels,name,spacing):
+    # 计算dice
+    preorgan_fdata = predLabel_array[0].squeeze()
+    pretumor_fdata = predLabel_array[1].squeeze()
+    preorgan_fdata = torch.FloatTensor(preorgan_fdata.astype(float)).unsqueeze(0)
+    pretumor_fdata = torch.FloatTensor(pretumor_fdata.astype(float)).unsqueeze(0)
+    preorgan_labels = common.to_one_hot_3d(preorgan_fdata.long(), 4).numpy()
+    pretumor_labels = common.to_one_hot_3d(pretumor_fdata.long(), 2).numpy()
+    labelorgan_fdata = labels[0].squeeze()
+    labeltumor_fdata = labels[1].squeeze()
+    labelorgan_fdata = torch.FloatTensor(labelorgan_fdata.astype(float)).unsqueeze(0)
+    labeltumor_fdata = torch.FloatTensor(labeltumor_fdata.astype(float)).unsqueeze(0)
+    organ_label = common.to_one_hot_3d(labelorgan_fdata.long(), 4).numpy()
+    tumor_label = common.to_one_hot_3d(labeltumor_fdata.long(), 2).numpy()
+    temp_asd = [name]
+    asds = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for i in range(1, 4):
+        asd = getasd(torch.FloatTensor(organ_label[:, i, :, :, :]),
+                       torch.FloatTensor(preorgan_labels[:, i, :, :, :])) * spacing
+        asd = np.array(asd) * 3  #3是z轴spacing
+        temp_asd.append(asd)
+        asds[i] = asds[i] + asd
+    asd = getasd(torch.FloatTensor(tumor_label[:, 1, :, :, :]),
+                   torch.FloatTensor(pretumor_labels[:, 1, :, :, :])) * spacing
+    asd = np.array(asd) * 3
+    asds[4] = asds[4] + asd
+    temp_asd.append(asd*3)
+    # print(temp_asd)
+    return temp_asd
+def get_dice(predLabel_array,labels,name):
+    # 计算dice
+    preorgan_fdata = predLabel_array[0].squeeze()
+    pretumor_fdata = predLabel_array[1].squeeze()
+    preorgan_fdata = torch.FloatTensor(preorgan_fdata.astype(float)).unsqueeze(0)
+    pretumor_fdata = torch.FloatTensor(pretumor_fdata.astype(float)).unsqueeze(0)
+    preorgan_labels = common.to_one_hot_3d(preorgan_fdata.long(), 4).numpy()
+    pretumor_labels = common.to_one_hot_3d(pretumor_fdata.long(), 2).numpy()
+    labelorgan_fdata = labels[0].squeeze()
+    labeltumor_fdata = labels[1].squeeze()
+    labelorgan_fdata = torch.FloatTensor(labelorgan_fdata.astype(float)).unsqueeze(0)
+    labeltumor_fdata = torch.FloatTensor(labeltumor_fdata.astype(float)).unsqueeze(0)
+    organ_label = common.to_one_hot_3d(labelorgan_fdata.long(), 4).numpy()
+    tumor_label = common.to_one_hot_3d(labeltumor_fdata.long(), 2).numpy()
+    temp_dice = [name]
+    dices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for i in range(1, 4):
+        dice = getdice(torch.FloatTensor(organ_label[:, i, :, :, :]),
+                       torch.FloatTensor(preorgan_labels[:, i, :, :, :])) * 100
+        dice = np.array(dice)
+        temp_dice.append(dice)
+        dices[i] = dices[i] + dice
+    dice = getdice(torch.FloatTensor(tumor_label[:, 1, :, :, :]),
+                   torch.FloatTensor(pretumor_labels[:, 1, :, :, :])) * 100
+    dice = np.array(dice)
+    dices[4] = dices[4] + dice
+    temp_dice.append(dice)
+    # print(temp_dice)
+    return temp_dice
+
+
+
+
+name = "unet_prompt"
+filename_list = load_file_name_list(os.path.join("./data/index", 'test_path_list.txt'))
+prediction = "./results_backbone/"+name+"/prediction"
+dice_all = []
+hd_all = []
+asd_all = []
+num = 0
+f = open("./results_backbone/"+name+"/"+ name + "_info.csv","w")
+writer = csv.writer(f)
+for singleImg in filename_list:
+    spacing = 0.97
+    name = singleImg[0].split("/")[-1]
+    img = sitk.ReadImage(singleImg[0])
+    img_fdata = sitk.GetArrayFromImage(img)
+    organ = sitk.ReadImage(singleImg[1])
+    organ_fdata = sitk.GetArrayFromImage(organ)
+    tumor = sitk.ReadImage(singleImg[2])
+    tumor_fdata = sitk.GetArrayFromImage(tumor)
+    prediction_organ_path = os.path.join(prediction,os.path.join(name,"organ.nii.gz"))
+    prediction_tumor_path = os.path.join(prediction,os.path.join(name,"tumor.nii.gz"))
+    pre_organ = sitk.GetArrayFromImage(sitk.ReadImage(prediction_organ_path))
+    pre_tumor = sitk.GetArrayFromImage(sitk.ReadImage(prediction_tumor_path))
+    dice = get_dice([pre_organ,pre_tumor],[organ_fdata,tumor_fdata],name)
+    hd = get_hd([pre_organ,pre_tumor],[organ_fdata,tumor_fdata],name,spacing)
+    asd = get_asd([pre_organ,pre_tumor],[organ_fdata,tumor_fdata],name,spacing)
+    writer.writerow(dice)
+    dice_all.append(dice[1:])
+    hd_all.append(hd[1:])
+    asd_all.append(asd[1:])
+    num = num + 1
+# dice_avg
+dice_avg = np.average(dice_all,axis=0)
+organ_avg_dice = np.average(dice_avg[:-1])
+all_dice_avg = np.average(dice_avg)
+dice_avg = list(dice_avg)
+dice_avg.append("avg")
+dice_avg.append(organ_avg_dice)
+dice_avg.append(all_dice_avg)
+dice_std = np.std(dice_all,axis=0)
+organ_std_dice = np.average(dice_std[:-1])
+all_dice_std = np.average(dice_std)
+dice_std = list(dice_std)
+dice_std.append("avg")
+dice_std.append(organ_std_dice)
+dice_std.append(all_dice_std)
+print(["dice_avg"] + dice_avg)
+print(["dice_std"] + dice_std)
+writer.writerow(["dice_avg"] + dice_avg)
+writer.writerow(["dice_std"] + dice_std)
+
+# hd_avg
+hd_avg = np.average(hd_all,axis=0)
+organ_avg_hd = np.average(hd_avg[:-1])
+all_hd_avg = np.average(hd_avg)
+hd_avg = list(hd_avg)
+hd_avg.append("avg")
+hd_avg.append(organ_avg_hd)
+hd_avg.append(all_hd_avg)
+hd_std = np.std(hd_all,axis=0)
+organ_std_hd = np.average(hd_std[:-1])
+all_hd_std = np.average(hd_std)
+hd_std = list(hd_std)
+hd_std.append("avg")
+hd_std.append(organ_std_hd)
+hd_std.append(all_hd_std)
+print(["hd_avg"] + hd_avg)
+print(["hd_std"] + hd_std)
+writer.writerow(["hd_avg"] + hd_avg)
+writer.writerow(["hd_std"] + hd_std)
+
+
+#asd_avg
+asd_avg = np.average(asd_all,axis=0)
+organ_avg_asd = np.average(asd_avg[:-1])
+all_asd_avg = np.average(asd_avg)
+asd_avg = list(asd_avg)
+asd_avg.append("avg")
+asd_avg.append(organ_avg_asd)
+asd_avg.append(all_asd_avg)
+asd_std = np.std(asd_all,axis=0)
+organ_std_asd = np.average(asd_std[:-1])
+all_asd_std = np.average(asd_std)
+asd_std = list(asd_std)
+asd_std.append("avg")
+asd_std.append(organ_std_asd)
+asd_std.append(all_asd_std)
+print(["asd_avg"] + asd_avg)
+print(["asd_std"] + asd_std)
+writer.writerow(["asd_avg"] + asd_avg)
+writer.writerow(["asd_std"] + asd_std)
+
+f.close()
+print()
