@@ -1,5 +1,5 @@
-# ROJS-Net: Multi-objective joint segmentation network for tumor and organs-at-risk
-This is the project web for the study titled "Multi-objective joint segmentation network for tumor and organs-at-risk".
+# ROJS-Net: Multi-objective Joint Segmentation Network for Tumor and Organs-at-risk
+This is the project web for the study titled "Multi-objective Joint Segmentation Network for Tumor and Organs-at-risk".
 
 <div align="center">
   <img width="100%" alt="ROJS-Net illustration" src="imgs/framework.png">
